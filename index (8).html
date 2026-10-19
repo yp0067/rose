@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Python 粒子玫瑰花束 - 舒缓飘落动态特效</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background-color: #121316;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      font-family: Consolas, monospace;
+    }
+    #canvas-container {
+      width: 100%;
+      height: 100%;
+    }
+    .tip {
+      position: absolute;
+      bottom: 20px;
+      width: 100%;
+      text-align: center;
+      color: rgba(255, 255, 255, 0.45);
+      font-size: 12px;
+      pointer-events: none;
+      letter-spacing: 1px;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+  <div class="tip">✦ 左键拖动 360° 观赏阶梯层叠花束与舒缓粒子飘落特效 / 滚轮缩放 ✦</div>
+  <div id="canvas-container"></div>
+
+  <script>
+    // 1. 初始化场景与相机
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(2.6, 1.2, 3.3);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setClearColor(0x121316, 1);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.75;
+    controls.target.set(0, -0.05, 0);
+
+    // 2. 视频同款三维白色参考线框
+    const boxGeo = new THREE.BoxGeometry(2.6, 2.9, 2.6);
+    const boxEdges = new THREE.EdgesGeometry(boxGeo);
+    const boxMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.30 });
+    const wireframeBox = new THREE.LineSegments(boxEdges, boxMat);
+    wireframeBox.position.set(0, -0.02, 0);
+    scene.add(wireframeBox);
+
+    // 3. 静态粒子缓存（19万高密度粒子）
+    const maxParticles = 195000;
+    const positions = new Float32Array(maxParticles * 3);
+    const colors = new Float32Array(maxParticles * 3);
+    let pIdx = 0;
+
+    function addPoint(x, y, z, r, g, b) {
+      if (pIdx >= maxParticles * 3) return;
+      positions[pIdx] = x;
+      positions[pIdx + 1] = y;
+      positions[pIdx + 2] = z;
+      colors[pIdx] = r;
+      colors[pIdx + 1] = g;
+      colors[pIdx + 2] = b;
+      pIdx += 3;
+    }
+
+    const GOLDEN_ANGLE = 137.50776 * (Math.PI / 180);
+    const BIND_POINT = new THREE.Vector3(0, -0.58, 0.02);
+
+    // =========================================================================
+    // 4. 生成单朵高脚杯螺旋玫瑰 + 连向束腰握把的真实独立花茎
+    // =========================================================================
+    function createRoseWithStem(center, tiltDir, scale, theme, totalPetals, ptsPerPetal) {
+      const up = new THREE.Vector3(0, 1, 0);
+      const normal = tiltDir.clone().normalize();
+      const quat = new THREE.Quaternion().setFromUnitVectors(up, normal);
+
+      for (let k = 0; k < totalPetals; k++) {
+        const layerNorm = k / (totalPetals - 1);
+        const phiCenter = k * GOLDEN_ANGLE;
+
+        const angularSpan = 0.88 + 1.20 * Math.pow(layerNorm, 0.72);
+        const baseRadius = scale * (0.022 + 0.45 * Math.pow(layerNorm, 0.86));
+        const petalHeight = scale * (0.65 + 0.18 * Math.sin(layerNorm * Math.PI));
+        const wavePhase = (k % 4) * 1.3;
+
+        for (let i = 0; i < ptsPerPetal; i++) {
+          const u = (Math.random() * 2 - 1);
+          const rand = Math.random();
+          const v = (rand < 0.42) ? (0.85 + 0.15 * Math.random()) : Math.pow(Math.random(), 0.75);
+
+          const fanWidth = 0.20 + 0.80 * Math.sin(v * Math.PI * 0.6);
+          const heartNotch = (layerNorm > 0.3) ? 0.055 * Math.exp(-Math.pow(u * 3.2, 2)) : 0;
+          const topEdgeV = 1.0 - 0.30 * Math.pow(Math.abs(u), 2.0) - heartNotch;
+          if (v > topEdgeV) continue;
+
+          const vRatio = v / topEdgeV;
+          const gobletBelly = Math.sin(vRatio * Math.PI * 0.82) * scale * (0.06 + 0.15 * layerNorm);
+          let flareOut = 0;
+          let lipWave = 0;
+
+          if (layerNorm < 0.25) {
+            flareOut = -scale * 0.065 * Math.pow(vRatio, 1.4) * (1 - layerNorm * 3.2);
+          } else if (layerNorm < 0.58) {
+            const midF = (layerNorm - 0.25) / 0.33;
+            if (vRatio > 0.62) {
+              flareOut = scale * 0.18 * midF * Math.pow((vRatio - 0.62) / 0.38, 1.5);
+            }
+          } else {
+            const outF = (layerNorm - 0.58) / 0.42;
+            if (vRatio > 0.45) {
+              const curlP = (vRatio - 0.45) / 0.55;
+              const pointTip = 1.32 - 0.52 * Math.abs(u);
+              lipWave = Math.sin(u * Math.PI * 2.5 + wavePhase) * 0.05 * scale * curlP;
+              flareOut = scale * (0.26 + 0.28 * outF) * Math.pow(curlP, 1.5) * pointTip;
+            }
+          }
+
+          const cupCurve = -Math.pow(u * fanWidth, 2) * scale * (0.09 + 0.06 * layerNorm);
+          const r = Math.max(0.008 * scale, baseRadius * Math.pow(vRatio, 0.45) + gobletBelly + flareOut + cupCurve + lipWave);
+          const y = petalHeight * Math.pow(vRatio, 0.70) * (1 - 0.30 * Math.pow(layerNorm, 1.3)) - flareOut * 0.54 + lipWave * 0.35;
+
+          const spiralTwist = (1 - layerNorm) * 0.38 * vRatio;
+          const theta = phiCenter + u * fanWidth * (angularSpan * 0.5) + spiralTwist;
+
+          const jitter = scale * (vRatio > 0.88 ? 0.014 : 0.022);
+          const localPos = new THREE.Vector3(
+            r * Math.cos(theta) + (Math.random() - 0.5) * jitter,
+            y + (Math.random() - 0.5) * jitter,
+            r * Math.sin(theta) + (Math.random() - 0.5) * jitter
+          );
+
+          localPos.applyQuaternion(quat).add(center);
+
+          const baseShadow = 0.22 + 0.78 * Math.pow(vRatio, 1.25);
+          const coreDarken = 0.50 + 0.50 * Math.pow(layerNorm, 0.65);
+          const edgeGlow = (vRatio > 0.85) ? Math.pow((vRatio - 0.85) / 0.15, 1.2) * 0.46 : 0;
+          const light = baseShadow * coreDarken;
+
+          let cr, cg, cb;
+          if (theme === 'crimson') {
+            cr = Math.min(1, 0.30 + 0.70 * light + edgeGlow * 0.35);
+            cg = Math.min(1, 0.04 + 0.36 * light + edgeGlow * 0.45);
+            cb = Math.min(1, 0.09 + 0.40 * light + edgeGlow * 0.42);
+          } else if (theme === 'blush') {
+            cr = Math.min(1, 0.40 + 0.60 * light + edgeGlow * 0.25);
+            cg = Math.min(1, 0.15 + 0.55 * light + edgeGlow * 0.35);
+            cb = Math.min(1, 0.20 + 0.56 * light + edgeGlow * 0.35);
+          } else {
+            cr = Math.min(1, 0.46 + 0.52 * light + edgeGlow * 0.20);
+            cg = Math.min(1, 0.35 + 0.50 * light + edgeGlow * 0.22);
+            cb = Math.min(1, 0.34 + 0.48 * light + edgeGlow * 0.22);
+          }
+
+          addPoint(localPos.x, localPos.y, localPos.z, cr, cg, cb);
+        }
+      }
+
+      for (let s = 0; s < 180; s++) {
+        const sAng = Math.random() * Math.PI * 2;
+        const sH = -Math.random() * scale * 0.18;
+        const sR = scale * 0.12 * (1 + sH / (scale * 0.2));
+        const sPos = new THREE.Vector3(sR * Math.cos(sAng), sH, sR * Math.sin(sAng));
+        sPos.applyQuaternion(quat).add(center);
+        addPoint(sPos.x, sPos.y, sPos.z, 0.28, 0.42, 0.26);
+      }
+
+      const stemDir = new THREE.Vector3().subVectors(BIND_POINT, center);
+      const totalStemLen = 1.45;
+      for (let st = 0; st < 420; st++) {
+        const t = Math.random() * totalStemLen;
+        const stemPos = new THREE.Vector3().copy(center).addScaledVector(stemDir, t);
+        const radius = 0.018;
+        const a = Math.random() * Math.PI * 2;
+        stemPos.x += Math.cos(a) * radius;
+        stemPos.z += Math.sin(a) * radius;
+
+        if (t < 1.0) {
+          addPoint(stemPos.x, stemPos.y, stemPos.z, 0.25, 0.38, 0.24);
+        } else {
+          addPoint(stemPos.x, stemPos.y, stemPos.z, 0.48, 0.20, 0.26);
+        }
+      }
+    }
+
+    // 5. 阶梯错落式插花
+    const layeredBouquet = [
+      { pos: [-0.32, 0.72, -0.18], dir: [-0.35, 0.88, 0.25], scale: 0.48, theme: 'crimson', petals: 24, pts: 240 },
+      { pos: [0.06, 0.68, -0.26], dir: [0.08, 0.90, 0.32], scale: 0.46, theme: 'crimson', petals: 24, pts: 230 },
+      { pos: [-0.58, 0.56, 0.05], dir: [-0.68, 0.68, 0.25], scale: 0.50, theme: 'crimson', petals: 24, pts: 240 },
+      { pos: [0.38, 0.55, -0.18], dir: [0.45, 0.82, 0.28], scale: 0.45, theme: 'blush', petals: 23, pts: 220 },
+      { pos: [-0.14, 0.52, 0.14], dir: [-0.18, 0.85, 0.48], scale: 0.49, theme: 'crimson', petals: 24, pts: 250 },
+      { pos: [0.24, 0.44, 0.16], dir: [0.32, 0.80, 0.50], scale: 0.47, theme: 'cream', petals: 24, pts: 240 },
+      { pos: [-0.46, 0.38, 0.36], dir: [-0.58, 0.60, 0.55], scale: 0.48, theme: 'crimson', petals: 23, pts: 230 },
+      { pos: [0.56, 0.36, 0.12], dir: [0.75, 0.58, 0.32], scale: 0.46, theme: 'cream', petals: 23, pts: 230 },
+      { pos: [-0.26, 0.42, -0.44], dir: [-0.35, 0.68, -0.62], scale: 0.45, theme: 'crimson', petals: 22, pts: 210 },
+      { pos: [0.22, 0.40, -0.46], dir: [0.32, 0.68, -0.65], scale: 0.44, theme: 'blush', petals: 22, pts: 210 },
+      { pos: [-0.12, 0.28, 0.46], dir: [-0.15, 0.58, 0.80], scale: 0.47, theme: 'blush', petals: 23, pts: 230 },
+      { pos: [0.28, 0.24, 0.44], dir: [0.38, 0.55, 0.74], scale: 0.46, theme: 'cream', petals: 23, pts: 230 },
+      { pos: [-0.68, 0.26, 0.22], dir: [-0.82, 0.42, 0.38], scale: 0.45, theme: 'blush', petals: 22, pts: 210 },
+      { pos: [0.64, 0.18, 0.36], dir: [0.78, 0.42, 0.46], scale: 0.44, theme: 'cream', petals: 22, pts: 210 },
+      { pos: [-0.56, 0.24, -0.32], dir: [-0.75, 0.48, -0.45], scale: 0.44, theme: 'crimson', petals: 21, pts: 200 },
+      { pos: [0.52, 0.22, -0.34], dir: [0.72, 0.48, -0.48], scale: 0.43, theme: 'cream', petals: 21, pts: 200 },
+      { pos: [-0.38, 0.08, 0.58], dir: [-0.45, 0.35, 0.82], scale: 0.44, theme: 'crimson', petals: 22, pts: 210 },
+      { pos: [0.04, 0.04, 0.64], dir: [0.05, 0.32, 0.94], scale: 0.45, theme: 'blush', petals: 22, pts: 210 },
+      { pos: [0.44, 0.02, 0.56], dir: [0.55, 0.30, 0.78], scale: 0.44, theme: 'cream', petals: 22, pts: 210 },
+      { pos: [-0.74, 0.05, -0.04], dir: [-0.92, 0.28, -0.05], scale: 0.43, theme: 'blush', petals: 21, pts: 190 },
+      { pos: [0.72, 0.02, -0.02], dir: [0.92, 0.25, -0.05], scale: 0.43, theme: 'cream', petals: 21, pts: 190 },
+      { pos: [0.0, 0.14, -0.60], dir: [0.0, 0.38, -0.92], scale: 0.44, theme: 'blush', petals: 21, pts: 190 }
+    ];
+
+    layeredBouquet.forEach(f => {
+      createRoseWithStem(
+        new THREE.Vector3(...f.pos),
+        new THREE.Vector3(...f.dir),
+        f.scale,
+        f.theme,
+        f.petals,
+        f.pts
+      );
+    });
+
+    // 6. 尤加利叶枝与满天星
+    function createFoliageSprig(startPos, dirVec, length) {
+      const dir = dirVec.clone().normalize();
+      for (let i = 0; i < 550; i++) {
+        const t = Math.random();
+        const spine = startPos.clone().addScaledVector(dir, t * length);
+        const leafIdx = Math.floor(t * 7);
+        const side = (leafIdx % 2 === 0) ? 1 : -1;
+        const leafSpread = (0.04 + 0.12 * Math.sin(t * Math.PI)) * Math.random();
+
+        spine.x += side * leafSpread * dir.z + (Math.random() - 0.5) * 0.04;
+        spine.z -= side * leafSpread * dir.x + (Math.random() - 0.5) * 0.04;
+        spine.y += (Math.random() - 0.5) * 0.04;
+
+        if (t > 0.72 && Math.random() < 0.55) {
+          addPoint(spine.x, spine.y, spine.z, 0.90, 0.85, 0.82);
+        } else {
+          const shade = 0.45 + 0.50 * t;
+          addPoint(spine.x, spine.y, spine.z, 0.46 * shade, 0.54 * shade, 0.44 * shade);
+        }
+      }
+    }
+
+    for (let s = 0; s < 26; s++) {
+      const ang = (s / 26) * Math.PI * 2 + (Math.random() - 0.5) * 0.2;
+      const rad = 0.25 + (s % 3) * 0.22;
+      const h = 0.05 + (1 - rad) * 0.35 - Math.sin(ang) * 0.12;
+      const start = new THREE.Vector3(rad * Math.cos(ang), h, rad * Math.sin(ang));
+      const outDir = new THREE.Vector3(Math.cos(ang) * 0.85, 0.45 + (s % 2) * 0.3, Math.sin(ang) * 0.85);
+      createFoliageSprig(start, outDir, 0.42 + Math.random() * 0.25);
+    }
+
+    // 7. 立体折纸花束包装
+    function createWrappingSheet(angleCenter, angleSpan, topHeight, bottomSkirtLen, radiusScale, colorRGB, ptsCount) {
+      for (let i = 0; i < ptsCount; i++) {
+        const u = (Math.random() * 2 - 1);
+        const randV = Math.random();
+        const v = (randV < 0.25) ? (0.88 + 0.12 * Math.random()) : (-bottomSkirtLen + (1 + bottomSkirtLen) * Math.random());
+        const peakShape = 1.0 - 0.42 * Math.abs(u);
+        if (v > peakShape) continue;
+
+        const theta = angleCenter + u * (angleSpan * 0.5);
+        let rad;
+        if (v >= 0) {
+          rad = 0.11 + Math.pow(v / peakShape, 0.88) * (0.76 * radiusScale);
+        } else {
+          rad = 0.11 + Math.pow(Math.abs(v) / bottomSkirtLen, 0.92) * (0.36 * radiusScale);
+        }
+
+        const paperCrease = (1 - Math.abs(u)) * 0.09 * Math.abs(v);
+        const waveFold = Math.cos(u * Math.PI * 1.5) * 0.04 * Math.abs(v);
+        rad += paperCrease + waveFold;
+
+        const y = BIND_POINT.y + (v >= 0 ? v * topHeight : v * 0.58);
+        const x = BIND_POINT.x + rad * Math.cos(theta) + (Math.random() - 0.5) * 0.012;
+        const z = BIND_POINT.z + rad * Math.sin(theta) + (Math.random() - 0.5) * 0.012;
+
+        const isEdge = (Math.abs(v - peakShape) < 0.05 || Math.abs(u) > 0.92);
+        const creaseLight = 0.65 + 0.35 * (1 - Math.abs(u)) + (isEdge ? 0.22 : 0);
+
+        addPoint(
+          x, y, z,
+          Math.min(1, colorRGB[0] * creaseLight),
+          Math.min(1, colorRGB[1] * creaseLight),
+          Math.min(1, colorRGB[2] * creaseLight)
+        );
+      }
+    }
+
+    createWrappingSheet(-Math.PI * 0.5, 1.35, 1.05, 0.65, 1.05, [0.82, 0.75, 0.78], 5500);
+    createWrappingSheet(-Math.PI * 0.78, 1.25, 0.98, 0.62, 1.02, [0.88, 0.80, 0.82], 5000);
+    createWrappingSheet(-Math.PI * 0.22, 1.25, 0.95, 0.62, 1.02, [0.86, 0.78, 0.80], 5000);
+    createWrappingSheet(Math.PI * 0.92, 1.20, 0.78, 0.58, 1.08, [0.92, 0.84, 0.86], 4800);
+    createWrappingSheet(0.08, 1.20, 0.74, 0.58, 1.08, [0.90, 0.83, 0.85], 4800);
+    createWrappingSheet(Math.PI * 0.68, 1.15, 0.55, 0.52, 0.96, [0.95, 0.89, 0.90], 4500);
+    createWrappingSheet(Math.PI * 0.32, 1.15, 0.52, 0.52, 0.96, [0.95, 0.89, 0.90], 4500);
+    createWrappingSheet(Math.PI * 0.50, 1.30, 0.45, 0.48, 0.90, [0.98, 0.93, 0.94], 4200);
+
+    for (let r = 0; r < 3500; r++) {
+      if (r < 1800) {
+        const ang = Math.random() * Math.PI * 2;
+        const h = BIND_POINT.y + (Math.random() - 0.5) * 0.08;
+        const rad = 0.115 + (Math.random() - 0.5) * 0.015;
+        addPoint(BIND_POINT.x + rad * Math.cos(ang), h, BIND_POINT.z + rad * Math.sin(ang), 0.96, 0.82, 0.86);
+      } else {
+        const ribbonSide = (r % 2 === 0) ? 1 : -1;
+        const t = Math.random();
+        const ry = BIND_POINT.y - t * 0.48;
+        const rx = BIND_POINT.x + ribbonSide * (0.06 + t * 0.16 + Math.sin(t * 5) * 0.03) + (Math.random() - 0.5) * 0.02;
+        const rz = BIND_POINT.z + 0.12 + t * 0.08 + (Math.random() - 0.5) * 0.015;
+        addPoint(rx, ry, rz, 0.98, 0.85, 0.88);
+      }
+    }
+
+    // 8. 静态主花束网格
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions.subarray(0, pIdx), 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors.subarray(0, pIdx), 3));
+
+    const material = new THREE.PointsMaterial({
+      size: 0.0135,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.92
+    });
+
+    const bouquet = new THREE.Points(geometry, material);
+    scene.add(bouquet);
+
+    // 9. 动态掉落粒子系统（已将下落速度减慢 50%）
+    const fallCount = 1500;
+    const fallGeo = new THREE.BufferGeometry();
+    const fallPositions = new Float32Array(fallCount * 3);
+    const fallVelocities = new Float32Array(fallCount * 3);
+
+    for (let i = 0; i < fallCount; i++) {
+      fallPositions[i * 3]     = (Math.random() - 0.5) * 1.2;
+      fallPositions[i * 3 + 1] = 0.2 + Math.random() * 0.6;
+      fallPositions[i * 3 + 2] = (Math.random() - 0.5) * 1.2;
+
+      // 速度减慢 50%（Y轴速度系数由原先的 0.004~0.010 降为 0.002~0.005）
+      fallVelocities[i * 3]     = (Math.random() - 0.5) * 0.0015; 
+      fallVelocities[i * 3 + 1] = 0.002 + Math.random() * 0.003;  
+      fallVelocities[i * 3 + 2] = (Math.random() - 0.5) * 0.0015; 
+    }
+
+    fallGeo.setAttribute('position', new THREE.BufferAttribute(fallPositions, 3));
+
+    const fallMat = new THREE.PointsMaterial({
+      size: 0.018,
+      color: 0xffb7c5,
+      transparent: true,
+      opacity: 0.75,
+      blending: THREE.AdditiveBlending
+    });
+
+    const fallingParticles = new THREE.Points(fallGeo, fallMat);
+    scene.add(fallingParticles);
+
+    // 10. 渲染循环与减慢后的动态粒子更新
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const posArr = fallGeo.attributes.position.array;
+      for (let i = 0; i < fallCount; i++) {
+        posArr[i * 3 + 1] -= fallVelocities[i * 3 + 1];
+        posArr[i * 3]     += Math.sin(Date.now() * 0.001 + i) * 0.0005 + fallVelocities[i * 3];
+        posArr[i * 3 + 2] += Math.cos(Date.now() * 0.001 + i) * 0.0005 + fallVelocities[i * 3 + 2];
+
+        if (posArr[i * 3 + 1] < -1.1) {
+          posArr[i * 3]     = (Math.random() - 0.5) * 1.0;
+          posArr[i * 3 + 1] = 0.6 + Math.random() * 0.3;
+          posArr[i * 3 + 2] = (Math.random() - 0.5) * 1.0;
+        }
+      }
+      fallGeo.attributes.position.needsUpdate = true;
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
